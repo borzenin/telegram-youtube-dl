@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from typing import Sequence
 
@@ -11,7 +12,8 @@ from telethon.sessions import StringSession
 
 from bot_events import Handler
 from database import ImprovedSession, use_session
-from models import (Base, Session, User)
+from models import (Base, Session, User, Download, DownloadType)
+from utils import random_string
 from youtube_dl_manager import YoutubeManager
 
 
@@ -95,3 +97,40 @@ class YoutubeDownloaderBot:
                 db_session.commit()
 
         await event.respond('Welcome to Youtube Downloader Bot!', buttons=Button.clear())
+
+    @Handler.register(NewMessage(pattern=r'^http'))
+    async def on_url(self, event: NewMessage.Event):
+        if self.youtube_manager.is_downloading(event.chat_id):
+            self.logger.debug('Already downloading for {}'.format(event.chat_id))
+            await event.respond('Something already downloading. Please wait')
+            return
+
+        url: str = event.raw_text
+        self.logger.debug('Url received: {}'.format(url))
+        target_message = await event.respond('Checking...')
+        info = await self.youtube_manager.get_info(url)
+        if info is None:
+            self.logger.debug('Video was not found')
+            await event.respond('Video was not found', buttons=Button.clear())
+            return
+
+        download_id = random_string(16)
+        with use_session(self.session_cls, autocommit=True) as db_session:
+            download = Download(
+                event.chat_id,
+                download_id,
+                url,
+                info['title'],
+                info['duration'],
+                json.dumps(info['formats'])
+            )
+            db_session.insert_or_replace(download)
+
+        self.logger.debug('Download object was created for {}'.format(info['title'][:30]))
+        await event.client.delete_messages(event.chat_id, [event.message.id, target_message.id])
+
+        await event.respond('<b>{}</b>\nChoose download type:'.format(info['title']), buttons=[
+            Button.inline('Video', data=f'type_{download_id}_{DownloadType.VIDEO.name}'),
+            Button.inline('Audio (default)', data=f'type_{download_id}_{DownloadType.AUDIO_DEFAULT.name}'),
+            Button.inline('Audio (custom)', data=f'type_{download_id}_{DownloadType.AUDIO_CUSTOM.name}')
+        ])
