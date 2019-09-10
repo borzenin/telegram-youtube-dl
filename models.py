@@ -3,7 +3,18 @@ from sqlalchemy import Column, Integer, Text, Enum
 from sqlalchemy.ext.declarative import declarative_base
 
 
+def model_repr(instance) -> str:
+    class_name = instance.__class__.__name__
+    attrs = filter(lambda x: not x[0].startswith('_'), instance.__dict__.items())
+    repr_ = "<{}({})>".format(
+        class_name,
+        ', '.join(map(lambda x: '='.join(x), attrs))
+    )
+    return repr_
+
+
 Base = declarative_base()
+setattr(Base, '__repr__', model_repr)
 
 
 class User(Base):
