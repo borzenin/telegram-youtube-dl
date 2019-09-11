@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from math import ceil
+from pathlib import Path
 from typing import Sequence
 
 from sqlalchemy import create_engine
@@ -187,3 +188,49 @@ class YoutubeDownloaderBot:
 
     async def on_type_audio_custom_picked(self, event: NewMessage.Event):
         pass
+
+    @Handler.register(CallbackQuery(pattern=rb'^video_'))
+    async def on_video_format_picked(self, event: CallbackQuery.Event):
+        splitted_data = event.data.decode().split('_')
+        download_id = splitted_data[1]
+        format_id = '_'.join(splitted_data[2:])
+        self.logger.debug('Video format id was picked: {}'.format(format_id))
+
+        with use_session(self.session_cls) as db_session:
+            download = db_session.query(Download).filter(Download.chat_id == event.chat_id).one_or_none()
+
+        if download is None or download.download_id != download_id:
+            self.logger.error('Download object was not exists. Skip.')
+            await event.delete()
+            return
+
+        await event.delete()
+        self.logger.debug('Start downloading {}'.format(download.url))
+        target_message = await event.respond(
+            '<b>{}</b>\nStart downloading. Please wait'.format(download.title),
+            buttons=Button.clear()
+        )
+
+        video_path = await self.youtube_manager.download_video(download.url, format_id, chat_id=event.chat_id)
+        await event.client.delete_messages(event.chat_id, target_message)
+
+        if video_path is None:
+            self.logger.error('Cannot download. Error occurred')
+            await event.respond('<b>{}</b>\nCannot download. Something wrong'.format(download.title))
+            return
+
+        self.logger.debug('Successfully downloaded. Start sending')
+        target_message = await event.respond(
+            '<b>{}</b>\nSuccessfully downloaded. Start sending'.format(download.title)
+        )
+        video_message = await event.client.send_file(event.chat_id, video_path)
+        await event.client.delete_messages(event.chat_id, target_message)
+
+        if Path(video_path).exists():
+            Path(video_path).unlink()
+
+        self.logger.debug('Successfully sent')
+        await event.respond(
+            '<b>{}</b>\n0:00'.format(download.title),
+            reply_to=video_message
+        )
