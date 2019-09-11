@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from telethon import Button
 from telethon import TelegramClient
-from telethon.events import NewMessage, CallbackQuery
+from telethon.events import NewMessage, CallbackQuery, StopPropagation
 from telethon.sessions import StringSession
 
 from bot_events import Handler
@@ -99,6 +99,20 @@ class YoutubeDownloaderBot:
                 db_session.commit()
 
         await event.respond('Welcome to Youtube Downloader Bot!', buttons=Button.clear())
+
+    @Handler.register(NewMessage(func=lambda e: e.message.is_reply))
+    async def on_reply(self, event: NewMessage.Event):
+        msg = await event.client.get_messages(event.chat_id, ids=event.message.reply_to_msg_id)
+        if not msg.is_reply:
+            return
+        media_msg = await event.client.get_messages(event.chat_id, ids=msg.reply_to_msg_id)
+        if media_msg.file is None:
+            return
+
+        title = msg.text.split('\n')[0]
+        await event.client.edit_message(msg, '\n'.join([title, event.raw_text]))
+        await event.client.delete_messages(event.chat_id, event.message)
+        raise StopPropagation
 
     @Handler.register(NewMessage(pattern=r'^http'))
     async def on_url(self, event: NewMessage.Event):
