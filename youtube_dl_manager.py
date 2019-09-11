@@ -5,6 +5,8 @@ from typing import Union, Optional
 
 from youtube_dl import YoutubeDL
 
+from utils import random_string
+
 
 class YoutubeManager:
 
@@ -71,3 +73,44 @@ class YoutubeManager:
 
         except Exception:
             future.set_result(None)
+
+    async def download_video(self, url: str, format_id: str, chat_id: Union[str, int] = None) -> Optional[str]:
+        """
+        :return: path
+        """
+        future = self.loop.create_future()
+        if chat_id is None:
+            self.logger.info('Downloading video without chat_id registering')
+        else:
+            self.add_download_flag(chat_id)
+
+        try:
+            self.loop.run_in_executor(self.executor, self._download_video, url, format_id, future, self.logger)
+            result = await future
+        finally:
+            if chat_id is not None:
+                self.remove_download_flag(chat_id)
+
+        return result
+
+    @staticmethod
+    def _download_video(url: str, format_id: str, future: asyncio.Future, logger: logging.Logger):
+        def hook(d: dict):
+            if d['status'] == 'finished':
+                future.set_result(d['filename'])
+
+        ydl_opts = {
+            'format': format_id,
+            'outtmpl': 'media/{}.%(ext)s'.format(random_string(16)),
+            'logger': logger,
+            'progress_hooks': [hook]
+        }
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+        except Exception:
+            future.set_result(None)
+        else:
+            if not future.done():
+                future.set_result(None)
